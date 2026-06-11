@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SMASH THE PATRIARCHY</title>
+<meta name="description" content="A boss-rush game where a Black woman shatters the words the patriarchy writes on her. By Rebecca Wanzo.">
+<style>
+  :root { --paper:#f3ecdf; --ink:#1a1414; --blood:#c81d2a; --gold:#d4a017; --cobalt:#1a3a8a; --cream:#f7f1e3; }
+  html,body { margin:0; padding:0; background:var(--paper); height:100%; overflow:hidden; }
+  #wrap { display:flex; align-items:center; justify-content:center; height:100vh; }
+  canvas { background:var(--paper); box-shadow:0 24px 70px rgba(0,0,0,0.20); max-width:98vw; max-height:96vh; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="800"></canvas></div>
+<script>
+"use strict";
+// ============================================================
+// SMASH THE PATRIARCHY — single-file edition
+// Concept & boss design: Rebecca Wanzo
+// No dependencies. Double-click this file to play.
+// ============================================================
+
+const W = 1280, H = 800, FLOOR = 620;
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+
+const PAL = {
+  paper:'#f3ecdf', ink:'#1a1414', inkSoft:'#2a2222', blood:'#c81d2a',
+  bloodDeep:'#8a0e1a', bloodLight:'#e85a64', gold:'#d4a017', goldLight:'#f0c148',
+  cobalt:'#1a3a8a', cobaltLight:'#3d5fb3', cream:'#f7f1e3',
+};
+const DISPLAY = 'Impact, "Arial Black", sans-serif';
+const MONO = '"Courier New", monospace';
+
+// ---------------- Boss data (Rebecca's designs) ----------------
+const BOSSES = [
+  { id:'manosphere', name:'MANOSPHERE',
+    components:[{word:'INCEL',hp:2},{word:'RED PILL',hp:3},{word:'MGTOW',hp:2},{word:'PICKUP ARTIST',hp:3}],
+    counterTruth:'SOLIDARITY',
+    counterTruthBody:'Isolated men taught to hate. The Smasher names them, breaks them apart.',
+    taunts:["You don't belong here.",'Logic. Reason. Hierarchy.',"You can't smash an idea."],
+    victoryLine:'It was always many things. Now it is broken things.',
+    primary:PAL.cobalt, accent:PAL.blood },
+  { id:'rape', name:'RAPE',
+    components:[{word:'VICTIM BLAMING',hp:2},{word:'SLUT SHAMING',hp:2},{word:'MARITAL RAPE',hp:3},{word:'RAPE CULTURE',hp:4}],
+    counterTruth:'CONSENT',
+    counterTruthBody:'A web of laws, lies, and silence. The Smasher tears it down.',
+    taunts:['No one will believe you.','What were you wearing?','It was just a joke.'],
+    primary:'#1a1414', accent:PAL.blood },
+  { id:'work', name:'WORK DISCRIMINATION',
+    components:[{word:'PAY GAP',hp:2},{word:'GLASS CEILING',hp:3},{word:'HIRING BIAS',hp:2},{word:'HARASSMENT',hp:4}],
+    counterTruth:'EQUITY',
+    counterTruthBody:'She breaks the ceiling with her hands. The office was never hers — she makes it so.',
+    taunts:["You're not leadership material.",'We went with a better fit.','Smile more.'],
+    primary:PAL.cobalt, accent:PAL.gold },
+  { id:'health', name:'HEALTH INEQUALITY',
+    components:[{word:'MATERNAL MORTALITY',hp:4},{word:'PAIN DISMISSAL',hp:2},{word:'REPRODUCTIVE CONTROL',hp:3}],
+    counterTruth:'BELIEVE HER',
+    counterTruthBody:'They told her the pain was in her head. The Smasher makes them listen.',
+    taunts:["It's all in your head.",'You exaggerate.','Lose some weight first.'],
+    primary:PAL.blood, accent:'#1a1414' },
+  { id:'motherhood', name:'MOTHERHOOD PENALTY',
+    components:[{word:'WAGE PENALTY',hp:2},{word:'CARE PENALTY',hp:2},{word:'PINK COLLAR',hp:3},{word:'BUMP PENALTY',hp:2}],
+    counterTruth:'WORTH HER WORK',
+    counterTruthBody:'The cost of caring is uncountable. The Smasher charges it anyway.',
+    taunts:['Who is watching the kids?','Not committed enough.','Mommy track.'],
+    primary:PAL.gold, accent:PAL.blood },
+  { id:'femicide', name:'FEMICIDE',
+    components:[{word:'MISOGYNOIR',hp:3},{word:'DOMESTIC VIOLENCE',hp:3},{word:'HONOR KILLING',hp:2},{word:'SILENCE = DEATH',hp:4}],
+    counterTruth:'SHE LIVED',
+    counterTruthBody:"For the ones who didn't. For the ones who still do. The Smasher names them.",
+    taunts:['No one saw anything.','She provoked it.','A private matter.'],
+    primary:'#1a1414', accent:PAL.blood },
+  { id:'essentialism', name:'GENDER ESSENTIALISM',
+    components:[{word:'PINK / BLUE',hp:2},{word:'HOUSEWIFE MYTH',hp:3},{word:'BIOLOGICAL DETERMINISM',hp:3},{word:'"JUST A GIRL"',hp:2}],
+    counterTruth:'I AM / I CHOOSE',
+    counterTruthBody:'The boss of bosses. Not a wall — a question. The Smasher answers it.',
+    taunts:['It is only natural.','Girls don\'t do that.','It has always been this way.'],
+    victoryLine:'The oldest boss. The one that taught the others to speak.',
+    primary:PAL.blood, accent:PAL.gold, isFinal:true },
+];
+
+// ---------------- Tiny audio (WebAudio beeps; starts on first input) ----------------
+let AC = null;
+function audioInit(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(AC && AC.state==='suspended') AC.resume(); }
+function beep(freq, dur, type, vol){
+  if(!AC) return;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type||'square'; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol||0.08, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + (dur||0.1));
+  o.connect(g); g.connect(AC.destination);
+  o.start(); o.stop(AC.currentTime + (dur||0.1));
+}
+const sfx = {
+  hit:   () => beep(180, 0.08, 'square', 0.10),
+  hurt:  () => beep(90, 0.18, 'sawtooth', 0.10),
+  crack: () => { beep(120,0.2,'sawtooth',0.12); setTimeout(()=>beep(80,0.25,'sawtooth',0.12),60); },
+  kill:  () => { beep(660,0.10,'square',0.08); setTimeout(()=>beep(880,0.12,'square',0.08),70); },
+  bomb:  () => { beep(60,0.4,'sawtooth',0.14); setTimeout(()=>beep(1320,0.3,'triangle',0.10),80); },
+  win:   () => { [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,0.22,'triangle',0.10), i*130)); },
+};
+
+// ---------------- Input ----------------
+const keys = {};
+const pressed = {}; // edge-triggered
+window.addEventListener('keydown', e => {
+  audioInit();
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+  if(!keys[e.code]) pressed[e.code] = true;
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+let clickPt = null;
+cv.addEventListener('pointerdown', e => {
+  audioInit();
+  const r = cv.getBoundingClientRect();
+  clickPt = { x: (e.clientX - r.left) * (W / r.width), y: (e.clientY - r.top) * (H / r.height) };
+});
+function key(...codes){ return codes.some(c => keys[c]); }
+function tap(...codes){ return codes.some(c => pressed[c]); }
+
+// ---------------- Helpers ----------------
+function rect(x,y,w,h,color){ ctx.fillStyle=color; ctx.fillRect(x,y,w,h); }
+function text(str,x,y,size,color,align,font){
+  ctx.fillStyle = color; ctx.font = `bold ${size}px ${font||DISPLAY}`;
+  ctx.textAlign = align||'center'; ctx.textBaseline='middle';
+  ctx.fillText(str, x, y);
+}
+function posterText(str,x,y,size,color,shadow){
+  ctx.font = `bold ${size}px ${DISPLAY}`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle = shadow||PAL.blood; ctx.fillText(str, x+3, y+3);
+  ctx.fillStyle = color; ctx.fillText(str, x, y);
+}
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const rand = (a,b)=>a+Math.random()*(b-a);
+
+// ---------------- Game state ----------------
+let mode = 'title';          // title | select | fight | victory | gameover
+let bossIdx = 0;
+let cleared = new Set();
+let G = null;                // fight state
+let shake = 0;
+let particles = [];
+let floaters = [];
+
+function startFight(i){
+  bossIdx = i;
+  const def = BOSSES[i];
+  G = {
+    def,
+    p: { x:220, y:FLOOR, hp:100, facing:1, truth:0, bombs:0,
+         atkT:0, atkKind:null, hurtT:0, iFr:0, blockHeld:false, won:false },
+    boss: { x:1020, y:FLOOR-150, w:230, h:300, hp:300, maxHp:300, phase:1,
+            alive:true, t:rand(0,9), shootT:2.2, flash:0,
+            pending:[...def.components], tauntIdx:0 },
+    comps: [], shots: [], time:0,
+  };
+  particles = []; floaters = [];
+  mode = 'fight';
+  taunt(def.taunts[0]);
+}
+
+function taunt(str){
+  if(!str || !G) return;
+  floaters.push({ str, x:G.boss.x, y:G.boss.y - G.boss.h/2 - 36, vy:-18, life:2.4, size:20, color:PAL.ink, bg:PAL.cream });
+}
+function floatWord(str,x,y,color,size){
+  floaters.push({ str, x, y, vy:-60, life:1.0, size:size||30, color:color||PAL.gold });
+}
+function burst(x,y,color,n){
+  for(let i=0;i<(n||10);i++) particles.push({
+    x,y, vx:rand(-260,260), vy:rand(-320,-40), s:rand(5,16), color, life:rand(0.4,0.9)
+  });
+}
+
+// ---------------- Fight logic ----------------
+function spawnComps(n){
+  const b = G.boss;
+  for(let i=0;i<n;i++){
+    const def = b.pending.shift();
+    if(!def) return;
+    G.comps.push({ word:def.word, hits:def.hp, x:b.x - 140 - i*90 + rand(-30,30), y:rand(FLOOR-170, FLOOR-50),
+                   jabT:rand(0.8,1.6), shootT:rand(2,4), flash:0, alive:true,
+                   w: ctx ? measureComp(def.word) : 120 });
+  }
+}
+function measureComp(word){
+  ctx.font = `bold 20px ${DISPLAY}`;
+  return ctx.measureText(word).width + 30;
+}
+
+function updateFight(dt){
+  const p = G.p, b = G.boss, def = G.def;
+  G.time += dt;
+
+  // ---- player ----
+  p.iFr = Math.max(0, p.iFr - dt);
+  p.hurtT = Math.max(0, p.hurtT - dt);
+  p.atkT = Math.max(0, p.atkT - dt);
+  p.blockHeld = key('ShiftLeft','ShiftRight');
+
+  const stunned = p.hurtT > 0;
+  if(!stunned && !p.blockHeld){
+    let mx = 0;
+    if(key('ArrowLeft','KeyA')) mx -= 1;
+    if(key('ArrowRight','KeyD')) mx += 1;
+    if(mx !== 0){ p.facing = mx; p.x += mx * 320 * dt; }
+    p.x = clamp(p.x, 60, W-60);
+
+    if(p.atkT <= 0){
+      if(tap('KeyJ','KeyZ')) { p.atkT = 0.28; p.atkKind='strike'; sfx.hit(); }
+      else if(tap('KeyK','KeyX')) { p.atkT = 0.5; p.atkKind='heavy'; sfx.hit(); }
+    }
+    if(tap('Space')){
+      if(p.bombs > 0){ p.bombs--; truthBomb(); }
+      else floatWord('NOT CHARGED \u2014 KEEP SMASHING', p.x, p.y-185, PAL.cobaltLight, 20);
+    }
+  }
+
+  // active attack hitbox (front window of the swing)
+  let hb = null;
+  if(p.atkT > 0){
+    const heavy = p.atkKind === 'heavy';
+    const windowOpen = heavy ? (p.atkT < 0.40 && p.atkT > 0.08) : (p.atkT < 0.25 && p.atkT > 0.03);
+    if(windowOpen) hb = { x: p.x + p.facing*85, y: p.y-130, w: heavy?190:160, h: heavy?340:300, dmg: heavy?22:10 };
+  }
+
+  // ---- boss ----
+  if(b.alive){
+    b.t += dt; b.flash = Math.max(0, b.flash - dt);
+    b.yBob = Math.sin(b.t*1.6)*8;
+    b.shootT -= dt;
+    if(b.shootT <= 0){
+      b.shootT = b.phase===3 ? 1.4 : b.phase===2 ? 1.9 : 2.5;
+      const raw = def.taunts[b.tauntIdx++ % def.taunts.length] || 'NO';
+      const word = raw.replace(/[^A-Za-z' ]/g,'').trim().split(/\s+/).slice(0,2).join(' ').toUpperCase() || 'NO';
+      const dir = p.x < b.x ? -1 : 1;
+      G.shots.push({ word, x:b.x + dir*(b.w/2), y:FLOOR-60, dir, sp:300, dmg:10, big:true });
+    }
+    if(hb && !hb.hitBoss && Math.abs(hb.x-b.x) < (hb.w+b.w)/2 && Math.abs(hb.y-(b.y+b.yBob)) < (hb.h+b.h)/2){
+      hb.hitBoss = true; b.hp -= hb.dmg; b.flash = 0.15; shake = 6; sfx.hit();
+      p.truth = Math.min(100, p.truth + 5); checkBomb();
+      burst(b.x + rand(-60,60), b.y + rand(-80,80), def.accent, 6);
+      if(b.phase===1 && b.hp <= 200){ b.phase=2; phaseBreak(); }
+      else if(b.phase===2 && b.hp <= 100){ b.phase=3; phaseBreak(); }
+      if(b.hp <= 0) bossDie();
+    }
+  }
+
+  // ---- components ----
+  for(const c of G.comps){
+    c.flash = Math.max(0, c.flash - dt);
+    c.jabT -= dt; c.shootT -= dt;
+    const dx = p.x - c.x, dy = (p.y-70) - c.y, d = Math.hypot(dx,dy)||1;
+    if(d > 60){ c.x += dx/d * 95 * dt; c.y += dy/d * 95 * dt + Math.sin(G.time*6 + c.x)*12*dt; }
+    c.y = clamp(c.y, FLOOR-180, FLOOR-30); // keep word-creatures at punchable height
+    if(d < 70 && c.jabT <= 0){ c.jabT = 1.4; hurtPlayer(6, c.x); }
+    if(d > 200 && c.shootT <= 0){
+      c.shootT = rand(2.5,4.5);
+      const dir = p.x < c.x ? -1 : 1;
+      G.shots.push({ word:c.word.split(' ')[0], x:c.x+dir*40, y:c.y, dir, sp:260, dmg:5 });
+    }
+    if(hb && !hb['hit'+c.word] && Math.abs(hb.x-c.x) < (hb.w+c.w)/2 && Math.abs(hb.y-c.y) < (hb.h+40)/2){
+      hb['hit'+c.word] = true;
+      compHit(c, hb.dmg >= 50 ? 99 : 1);
+    }
+  }
+  G.comps = G.comps.filter(c=>c.alive);
+
+  // ---- shots ----
+  for(const s of G.shots){
+    s.x += s.dir * s.sp * dt;
+    if(s.x < -60 || s.x > W+60){ s.dead = true; continue; }
+    // punch the word out of the air
+    if(hb && Math.abs(s.x-hb.x) < hb.w/2+30 && Math.abs(s.y-hb.y) < hb.h/2+24){
+      s.dead = true; sfx.kill();
+      burst(s.x, s.y, PAL.gold, 8);
+      floatWord('SMASHED', s.x, s.y-26, PAL.goldLight, 18);
+      p.truth = Math.min(100, p.truth+6); checkBomb();
+      continue;
+    }
+    if(p.iFr<=0 && Math.abs(s.x-p.x)<36 && Math.abs(s.y-(p.y-70))<70){
+      s.dead = true;
+      if(p.blockHeld){
+        sfx.kill(); p.truth = Math.min(100, p.truth+8); checkBomb();
+        floatWord('BLOCKED', p.x, p.y-150, PAL.goldLight, 22);
+        burst(p.x + p.facing*30, p.y-80, PAL.gold, 6);
+      } else hurtPlayer(s.dmg, s.x);
+    }
+  }
+  G.shots = G.shots.filter(s=>!s.dead);
+
+  // ---- particles & floaters ----
+  for(const q of particles){ q.life-=dt; q.x+=q.vx*dt; q.y+=q.vy*dt; q.vy+=600*dt; }
+  particles = particles.filter(q=>q.life>0);
+  for(const f of floaters){ f.life-=dt; f.y+=(f.vy||-40)*dt; }
+  floaters = floaters.filter(f=>f.life>0);
+  shake = Math.max(0, shake - 40*dt);
+
+  // ---- victory ----
+  if(!b.alive && G.comps.length===0 && !p.won){
+    p.won = true; sfx.win();
+    setTimeout(()=>{ cleared.add(def.id); mode='victory'; }, 900);
+  }
+}
+
+function phaseBreak(){
+  sfx.crack(); shake = 14;
+  spawnComps(2);
+  taunt(G.def.taunts[G.boss.phase-1]);
+}
+function bossDie(){
+  const b = G.boss;
+  b.alive = false; sfx.crack(); sfx.bomb(); shake = 20;
+  burst(b.x, b.y, G.def.primary, 26); burst(b.x, b.y, G.def.accent, 18);
+  spawnComps(b.pending.length);
+  G.p.truth = Math.min(100, G.p.truth + 40); checkBomb();
+}
+function compHit(c, dmg){
+  c.hits -= dmg; c.flash = 0.15; sfx.hit();
+  G.p.truth = Math.min(100, G.p.truth + 5); checkBomb();
+  if(c.hits <= 0){
+    c.alive = false; sfx.kill();
+    floatWord('+ '+c.word, c.x, c.y, PAL.gold, 26);
+    burst(c.x, c.y, PAL.gold, 12);
+    G.p.truth = Math.min(100, G.p.truth + 20); checkBomb();
+  }
+}
+function checkBomb(){
+  if(G.p.truth >= 100 && G.p.bombs===0){ G.p.bombs=1; G.p.truth=0; floatWord('TRUTH BOMB READY — SPACE', G.p.x, G.p.y-180, PAL.blood, 24); }
+}
+function hurtPlayer(dmg, fromX){
+  const p = G.p;
+  if(p.iFr > 0) return;
+  p.hp = Math.max(0, p.hp - dmg);
+  p.hurtT = 0.25; p.iFr = 0.8; shake = 8; sfx.hurt();
+  p.x += (p.x < fromX ? -1 : 1) * 26;
+  if(p.hp <= 0){ mode='gameover'; }
+}
+function truthBomb(){
+  sfx.bomb(); shake = 16;
+  G.bombRing = { r: 30, t: 0 };
+  G.shots = [];
+  for(const c of G.comps){
+    if(Math.hypot(c.x-G.p.x, c.y-(G.p.y-70)) < 460) compHit(c, 99);
+  }
+  const b = G.boss;
+  if(b.alive && Math.hypot(b.x-G.p.x, b.y-(G.p.y-70)) < 460){
+    b.hp -= 40; b.flash = 0.2;
+    if(b.phase===1 && b.hp<=200){ b.phase=2; phaseBreak(); }
+    else if(b.phase===2 && b.hp<=100){ b.phase=3; phaseBreak(); }
+    if(b.hp<=0) bossDie();
+  }
+}
+
+// ---------------- Drawing ----------------
+function drawFight(){
+  const p = G.p, b = G.boss, def = G.def;
+
+  // arena
+  rect(0,0,W,H,PAL.paper);
+  ctx.globalAlpha = 0.07; rect(0,0,W,FLOOR,def.primary); ctx.globalAlpha = 1;
+  rect(0,FLOOR,W,5,PAL.ink);
+  ctx.globalAlpha = 0.35; rect(0,FLOOR+5,W,90,def.accent); ctx.globalAlpha = 1;
+
+  // top strip
+  rect(0,0,W,70,PAL.ink); rect(0,70,W,5,def.accent);
+  text(def.name, 24, 32, 34, PAL.paper, 'left');
+  // boss hp
+  rect(24,52,600,9,PAL.bloodDeep);
+  rect(24,52,600*Math.max(0,b.hp/b.maxHp),9,PAL.blood);
+  // player hp & truth
+  text('SMASHER', 850, 22, 16, PAL.cream, 'left', MONO);
+  text('TRUTH', 1186, 22, 13, PAL.bloodLight, 'right', MONO);
+  rect(850,32,330,14,PAL.inkSoft); rect(850,32,330*(p.hp/100),14,PAL.gold);
+  rect(850,50,330,7,PAL.inkSoft);
+  rect(850,50,330*(p.truth/100),7,PAL.bloodLight);
+  if(p.bombs>0){ rect(850,50,330,7,PAL.gold); text('SPACE = TRUTH BOMB', 1190+0, 54, 13, PAL.goldLight, 'right', MONO); }
+
+  // boss
+  if(b.alive){
+    const bx = b.x, by = b.y + (b.yBob||0);
+    ctx.save();
+    if(b.flash>0 && Math.floor(b.flash*30)%2===0) ctx.globalAlpha = 0.55;
+    rect(bx-b.w/2+8, by-b.h/2+8, b.w, b.h, 'rgba(26,20,20,0.7)');
+    rect(bx-b.w/2, by-b.h/2, b.w, b.h, def.primary);
+    rect(bx-b.w/2, by-b.h/2, b.w, 28, def.accent);
+    rect(bx-b.w/2, by+b.h/2-28, b.w, 28, def.accent);
+    ctx.strokeStyle = PAL.gold; ctx.lineWidth = 4;
+    ctx.strokeRect(bx-b.w/2, by-b.h/2, b.w, b.h);
+    rect(bx-50, by-b.h/2+52, 34, 9, PAL.gold); rect(bx+16, by-b.h/2+52, 34, 9, PAL.gold);
+    // cracks per phase
+    ctx.strokeStyle = PAL.ink; ctx.lineWidth = 3;
+    for(let i=0;i<(b.phase-1)*4;i++){
+      const sx = bx + Math.sin(i*937)*b.w*0.4, sy = by + Math.cos(i*541)*b.h*0.4;
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx+Math.sin(i*113)*46, sy+Math.cos(i*71)*46); ctx.stroke();
+    }
+    // name, wrapped
+    const words = def.name.split(' ');
+    const fs = def.name.length > 14 ? 30 : 44;
+    words.forEach((wd,i)=> text(wd, bx, by - (words.length-1)*fs/2 + i*fs, fs, PAL.cream));
+    ctx.restore();
+  }
+
+  // components
+  for(const c of G.comps){
+    ctx.save();
+    if(c.flash>0 && Math.floor(c.flash*30)%2===0) ctx.globalAlpha = 0.5;
+    rect(c.x-c.w/2+3, c.y-20+3, c.w, 40, 'rgba(26,20,20,0.8)');
+    rect(c.x-c.w/2, c.y-20, c.w, 40, PAL.blood);
+    ctx.strokeStyle = PAL.gold; ctx.lineWidth=2.5; ctx.strokeRect(c.x-c.w/2, c.y-20, c.w, 40);
+    text(c.word, c.x, c.y+1, 20, PAL.cream);
+    ctx.restore();
+  }
+
+  // shots
+  for(const s of G.shots) text(s.word, s.x, s.y, s.big?26:18, s.big?PAL.ink:PAL.blood);
+
+  // truth bomb ring
+  if(G.bombRing){
+    G.bombRing.t += 1/60; G.bombRing.r += 1300/60;
+    ctx.strokeStyle = PAL.gold; ctx.lineWidth = 8; ctx.globalAlpha = Math.max(0, 1-G.bombRing.t*1.6);
+    ctx.beginPath(); ctx.arc(p.x, p.y-70, G.bombRing.r, 0, 7); ctx.stroke();
+    ctx.strokeStyle = PAL.blood; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, p.y-70, G.bombRing.r*0.8, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+    if(G.bombRing.t > 0.8) G.bombRing = null;
+  }
+
+  // ---- the Smasher (simple bold figure) ----
+  ctx.save();
+  if(p.iFr>0 && Math.floor(p.iFr*20)%2===0) ctx.globalAlpha = 0.45;
+  ctx.translate(p.x, p.y);
+  ctx.scale(p.facing, 1);
+  // shadow
+  ctx.fillStyle = 'rgba(26,20,20,0.25)'; ctx.beginPath(); ctx.ellipse(0, 4, 44, 9, 0, 0, 7); ctx.fill();
+  // legs
+  rect(-20,-52,14,52,PAL.ink); rect(8,-52,14,52,PAL.ink);
+  // dress / body
+  ctx.fillStyle = p.blockHeld ? PAL.cobalt : PAL.blood;
+  ctx.beginPath(); ctx.moveTo(-30,-50); ctx.lineTo(30,-50); ctx.lineTo(20,-125); ctx.lineTo(-20,-125); ctx.closePath(); ctx.fill();
+  // head
+  ctx.fillStyle = '#5a3825';
+  ctx.beginPath(); ctx.arc(0,-150,22,0,7); ctx.fill();
+  // hair — proud crown of curls
+  ctx.fillStyle = PAL.ink;
+  for(const [hx,hy,hr] of [[-18,-168,14],[0,-176,16],[18,-168,14],[-26,-154,11],[26,-154,11]]){
+    ctx.beginPath(); ctx.arc(hx,hy,hr,0,7); ctx.fill();
+  }
+  // gold crown
+  ctx.fillStyle = PAL.gold;
+  ctx.beginPath(); ctx.moveTo(-16,-184); ctx.lineTo(-8,-196); ctx.lineTo(0,-186); ctx.lineTo(8,-196); ctx.lineTo(16,-184); ctx.closePath(); ctx.fill();
+  // arms + fist
+  ctx.strokeStyle = '#5a3825'; ctx.lineWidth = 10; ctx.lineCap='round';
+  const swing = p.atkT > 0;
+  const heavy = p.atkKind==='heavy';
+  if(swing){
+    const ext = heavy ? 86 : 66;
+    ctx.beginPath(); ctx.moveTo(8,-110); ctx.lineTo(8+ext,-112); ctx.stroke();
+    ctx.fillStyle = PAL.gold; ctx.beginPath(); ctx.arc(14+ext,-112, heavy?16:12, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-10,-110); ctx.lineTo(-26,-86); ctx.stroke();
+  } else if(p.blockHeld){
+    ctx.beginPath(); ctx.moveTo(8,-110); ctx.lineTo(34,-128); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-10,-110); ctx.lineTo(20,-96); ctx.stroke();
+    ctx.fillStyle = PAL.goldLight; ctx.beginPath(); ctx.arc(40,-115,18,0,7); ctx.fill();
+  } else {
+    const sway = Math.sin(performance.now()/240)*4;
+    ctx.beginPath(); ctx.moveTo(8,-110); ctx.lineTo(26,-78+sway); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-10,-110); ctx.lineTo(-26,-78-sway); ctx.stroke();
+    ctx.fillStyle = PAL.gold;
+    ctx.beginPath(); ctx.arc(28,-74+sway,9,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc(-28,-74-sway,9,0,7); ctx.fill();
+  }
+  ctx.restore();
+
+  // particles & floaters
+  for(const q of particles){ ctx.globalAlpha = clamp(q.life*1.6,0,1); rect(q.x,q.y,q.s,q.s,q.color); }
+  ctx.globalAlpha = 1;
+  for(const f of floaters){
+    ctx.globalAlpha = clamp(f.life*1.4,0,1);
+    if(f.bg){ ctx.font=`bold ${f.size}px ${MONO}`; const wd = ctx.measureText(f.str).width;
+      rect(f.x-wd/2-8, f.y-f.size/2-5, wd+16, f.size+10, f.bg); text(f.str, f.x, f.y+1, f.size, f.color, 'center', MONO); }
+    else text(f.str, f.x, f.y, f.size, f.color);
+  }
+  ctx.globalAlpha = 1;
+
+  // controls hint
+  text('←→ move · J strike · K heavy · SHIFT block · SPACE truth bomb · ESC quit', W/2, H-22, 15, PAL.inkSoft, 'center', MONO);
+}
+
+// ---------------- Screens ----------------
+function drawTitle(){
+  rect(0,0,W,H,PAL.paper);
+  // diagonal banner
+  ctx.fillStyle = PAL.blood;
+  ctx.beginPath(); ctx.moveTo(0,H*0.16); ctx.lineTo(W,H*0.04); ctx.lineTo(W,H*0.24); ctx.lineTo(0,H*0.36); ctx.closePath(); ctx.fill();
+  posterText('SMASH', W/2, H*0.17, 130, PAL.paper, PAL.ink);
+  posterText('THE PATRIARCHY', W/2, H*0.32, 76, PAL.ink, PAL.blood);
+  text('Each monster is a word. Break the word,', W/2, H*0.47, 22, PAL.ink, 'center', MONO);
+  text('and it shatters into the smaller things that made it.', W/2, H*0.51, 22, PAL.ink, 'center', MONO);
+  text('a game by Rebecca Wanzo', W/2, H*0.60, 18, PAL.blood, 'center', MONO);
+  text('←→ move · J strike · K heavy · SHIFT block · SPACE truth bomb', W/2, H*0.78, 17, PAL.inkSoft, 'center', MONO);
+  if(Math.floor(performance.now()/600)%2===0)
+    text('[ CLICK OR PRESS ENTER ]', W/2, H*0.88, 24, PAL.blood, 'center', MONO);
+  if(tap('Enter','Space') || clickPt){ clickPt=null; mode='select'; }
+}
+
+const CARDS = [];
+(function(){ // precompute card layout: 4 + 3
+  const cw=250, chh=280, gap=26, sx=(W-(4*cw+3*gap))/2+cw/2;
+  BOSSES.forEach((bz,i)=>{
+    const col=i%4, row=Math.floor(i/4);
+    CARDS.push({ x:sx+col*(cw+gap)+(row===1?(cw+gap)/2:0), y:row===0?250:570, w:cw, h:chh, i });
+  });
+})();
+
+function drawSelect(){
+  rect(0,0,W,H,PAL.paper);
+  posterText('CHOOSE YOUR FIGHT', W/2, 70, 56, PAL.ink, PAL.blood);
+  let hover = -1;
+  for(const c of CARDS){
+    const bz = BOSSES[c.i];
+    const done = cleared.has(bz.id);
+    rect(c.x-c.w/2+6, c.y-c.h/2+6, c.w, c.h, 'rgba(200,29,42,0.55)');
+    rect(c.x-c.w/2, c.y-c.h/2, c.w, c.h, PAL.ink);
+    rect(c.x-c.w/2+8, c.y-c.h/2+8, c.w-16, c.h-16, bz.primary);
+    ctx.strokeStyle=PAL.gold; ctx.lineWidth=3;
+    ctx.strokeRect(c.x-c.w/2+14, c.y-c.h/2+14, c.w-28, c.h-28);
+    text('#'+(c.i+1), c.x, c.y-c.h/2+34, 15, PAL.cream, 'center', MONO);
+    const words = bz.name.split(' ');
+    const fs = bz.name.length>14 ? 26 : 34;
+    words.forEach((wd,j)=> text(wd, c.x, c.y-14-(words.length-1)*fs/2+j*fs, fs, PAL.cream));
+    text(done ? '✓ DISMANTLED' : 'PLAY', c.x, c.y+c.h/2-52, 16, done?PAL.goldLight:PAL.gold, 'center', MONO);
+    text(bz.components.length+' components', c.x, c.y+c.h/2-30, 13, PAL.cream, 'center', MONO);
+    if(clickPt && Math.abs(clickPt.x-c.x)<c.w/2 && Math.abs(clickPt.y-c.y)<c.h/2) hover = c.i;
+  }
+  text('click a fight to begin · numbers 1-7 also work', W/2, H-24, 15, PAL.inkSoft, 'center', MONO);
+  clickPt = null;
+  for(let n=1;n<=7;n++) if(tap('Digit'+n)) hover = n-1;
+  if(hover>=0) startFight(hover);
+  if(tap('Escape')) mode='title';
+}
+
+function drawVictory(){
+  const def = G.def;
+  rect(0,0,W,H,PAL.paper);
+  rect(0,H*0.30,W,H*0.34,PAL.gold);
+  rect(0,H*0.30,W,6,PAL.blood); rect(0,H*0.64-6,W,6,PAL.blood);
+  text('DISMANTLED', W/2, H*0.14, 42, PAL.blood);
+  // struck-through boss name
+  ctx.font = `bold 62px ${DISPLAY}`;
+  const nw = ctx.measureText(def.name).width;
+  text(def.name, W/2, H*0.225, 62, PAL.ink);
+  rect(W/2-nw/2-12, H*0.225-5, nw+24, 9, PAL.blood);
+  posterText(def.counterTruth, W/2, H*0.46, 92, PAL.paper, PAL.ink);
+  text(def.counterTruthBody, W/2, H*0.585, 21, PAL.ink, 'center', MONO);
+  text(def.components.map(c=>c.word).join('   ·   '), W/2, H*0.70, 16, PAL.blood, 'center', MONO);
+  if(def.victoryLine) text('"'+def.victoryLine+'"', W/2, H*0.77, 18, PAL.inkSoft, 'center', MONO);
+  const allDone = cleared.size === BOSSES.length;
+  text(allDone ? 'ALL SEVEN DISMANTLED. THE SMASHER RESTS.' : '[ ENTER / CLICK ] back to the fights',
+       W/2, H*0.90, allDone?26:20, allDone?PAL.blood:PAL.ink, 'center', MONO);
+  if(tap('Enter','Space') || clickPt){ clickPt=null; mode='select'; }
+}
+
+function drawGameOver(){
+  rect(0,0,W,H,PAL.ink);
+  posterText('KNOCKED DOWN', W/2, H*0.34, 84, PAL.paper, PAL.blood);
+  text('NOT KNOCKED OUT.', W/2, H*0.46, 40, PAL.gold);
+  text('[ ENTER ] get back up', W/2, H*0.64, 22, PAL.cream, 'center', MONO);
+  if(tap('Enter','Space') || clickPt){ clickPt=null; startFight(bossIdx); }
+}
+
+// ---------------- Main loop ----------------
+let last = performance.now();
+function frame(now){
+  let dt = Math.min((now - last)/1000, 0.05);
+  last = now;
+
+  ctx.save();
+  if(shake>0) ctx.translate(rand(-shake,shake), rand(-shake,shake));
+
+  if(mode==='title') drawTitle();
+  else if(mode==='select') drawSelect();
+  else if(mode==='fight'){ updateFight(dt); drawFight(); if(tap('Escape')) mode='select'; }
+  else if(mode==='victory') drawVictory();
+  else if(mode==='gameover') drawGameOver();
+
+  ctx.restore();
+
+  for(const k in pressed) pressed[k]=false;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
